@@ -2,7 +2,7 @@
 *A terminal based chat client*
 
 ------
-This is a a small project I did for the 'CST Hackathon' at the University of Bedfordshire. I wasn't able to achieve everything I wanted as I was really ill, but I managed to get something working.
+This is a small project I did for the 'CST Hackathon' at the University of Bedfordshire. I wasn't able to achieve everything I wanted as I was really ill, but I managed to get something working.
 
 There's still more I'd like to add and see where the project goes. 
 
