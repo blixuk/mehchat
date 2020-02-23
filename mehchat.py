@@ -10,6 +10,7 @@ class Server():
 	connection = socket.socket(socket.AF_INET, socket.SOCK_STREAM) # Defining socket as a TCP Socket
 	connection.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
 	connections = []
+	users = {}
 	address = '0.0.0.0' # Default address
 	port = 8080  # Default port
 	running = True # Keep alive while true
@@ -56,7 +57,7 @@ class Server():
 		self.debug('Connection', 'Listening')
 
 	def connectionHandler(self, connection, address):
-		if self.sendHandshake(connection, address) == True: # If Handshake is complete, Join server
+		if self.makeHandshake(connection, address) == True: # If Handshake is complete, Join server
 			self.debug('Connection', 'New Connection', address)
 			while True:
 				try:
@@ -77,10 +78,11 @@ class Server():
 
 				for client in self.connections:
 					if client != connection:
-						client.send(data)
+						user = bytes(Rose(self.getSeed()).encrypt(self.users[client]), 'utf-8')
+						client.send(user + b'\x04' + data)
 					self.debug('Connection', 'Sending Data', data)
 	
-	def sendHandshake(self, connection, address):
+	def makeHandshake(self, connection, address):
 		connection.send(b'\x00' + bytes(str(self.getSeed()), 'utf-8'))
 		self.debug('Connection', 'Sending Handshake', address)
 		data = connection.recv(1024)
@@ -88,11 +90,18 @@ class Server():
 		if not data:
 			sys.exit()
 
+		user = ''
+		if data[0:1] == b'\x02':
+			user = str(data[1:], 'utf-8')
+			self.debug('Connection', 'Received Information', address)
+
+		data = connection.recv(1024)
+
 		if data[0:1] == b'\x01':
-			print(str(data[1:], 'utf-8'))
 			if str(data[1:], 'utf-8') == str(self.getSeed()):
 				self.debug('Connection', 'Received Handshake', address)
-				self.connections.append(connection) # Adding the new connection to the connections list
+				self.connections.append(connection) 
+				self.users[connection]= user
 		else:
 			sys.exit()
 
@@ -119,8 +128,9 @@ class Client():
 	debugging = False
 	timestamp = datetime.datetime.now()
 	seed = ''
+	user = 'Anon'
 
-	def __init__(self, address, port):
+	def __init__(self, address, port, user):
 		if address != None:
 			self.setAddress(address)
 			self.debug('Init', 'Set Address', address)
@@ -128,6 +138,10 @@ class Client():
 		if port != None:
 			self.setPort(port)
 			self.debug('Init', 'Set Port', port)
+
+		if user != None:
+			self.setUser(user)
+			self.debug('Init', 'Set User', user)
 
 		self.setConnection()
 
@@ -147,6 +161,12 @@ class Client():
 	def setSeed(self, seed):
 		self.seed = seed
 
+	def getUser(self):
+		return self.user
+	
+	def setUser(self, user):
+		self.user = user
+
 	def messageHandler(self):
 		while True:
 			message = input('')
@@ -164,12 +184,12 @@ class Client():
 		self.connection.connect((self.address, self.port))
 		self.debug('Connection', 'Connecting', f'{self.address}:{self.port}')
 
-		if self.getHandshake() == True:
+		if self.makeHandshake() == True:
 			messageThread = threading.Thread(target=self.messageHandler) # Assigning our thread to the connection handler function
 			messageThread.daemon = True # Allowing exiting without closing threads
 			messageThread.start() # Running the thread
 
-	def getHandshake(self):
+	def makeHandshake(self):
 		data = self.connection.recv(1024)
 		self.debug('Connection', 'Receiving Handshake')
 
@@ -178,6 +198,9 @@ class Client():
 			self.debug('Connection', 'Seed',str(data[1:], 'utf-8'))
 		else:
 			sys.exit()
+
+		self.connection.send(b'\x02' + bytes(str(self.getUser()), 'utf-8'))
+		self.debug('Connection', 'Sending Information')
 
 		self.connection.send(b'\x01' + bytes(str(self.getSeed()), 'utf-8'))
 		self.debug('Connection', 'Sending Handshake')
@@ -197,10 +220,15 @@ class Client():
 	def run(self):
 		self.debug('Main', 'Client Running')
 		while self.running == True:
-			message = b''.join(self.recvall(self.connection))
-			self.debug('Main', 'Message Received', message)
-			temp = str(message, 'utf-8')
-			print(Rose(self.getSeed()).decrypt(temp))
+			data = b''.join(self.recvall(self.connection))
+			data = data.split(b'\x04')
+
+			user = Rose(self.getSeed()).decrypt(str(data[0], 'utf-8'))
+			message = Rose(self.getSeed()).decrypt(str(data[1], 'utf-8'))
+			
+			self.debug('Main', 'Message Received', message[1])
+
+			print(f'{user}: {message}')
 
 class Rose():
 
@@ -241,8 +269,8 @@ class Rose():
 
 	def encrypt(self, data):
 		string = ''
-		for char in data:
-			temp = int(ord(char)) * self.getSeed()
+		for char in str(data):
+			temp = int(ord(char) * (self.getSeed() & 0xffffff))
 			string = f'{string}-{str(temp)}'
 		
 		return string[1:]
@@ -251,7 +279,7 @@ class Rose():
 		string = ''
 		data = data.split('-')
 		for char in data:
-			temp = int(int(char) / self.getSeed())
+			temp = int(int(char) / (self.getSeed() & 0xffffff))
 			string = f'{string}{chr(temp)}'
 
 		return string
@@ -264,7 +292,11 @@ class Rose():
 def main():
 	if len(sys.argv) > 1:
 		if sys.argv[1] == '--client' or sys.argv[1] == '-c':
-			Client(None, None).run() # Define the Client
+			if len(sys.argv) > 2:
+				if sys.argv[2] == '--user' or sys.argv[2] == '-u':
+					Client(None, None, sys.argv[3]).run() # Define the Client
+			else:
+				Client(None, None, None).run() # Define the Client
 
 		if sys.argv[1] == '--server' or sys.argv[1] == '-s':
 			Server(None, None, 'ThisIsATestSeed01010101').run() # Define the Server
